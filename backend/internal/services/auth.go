@@ -13,7 +13,7 @@ import (
 // AuthService é a interface que define a lógica de negócio de autenticação.
 type AuthService interface {
 	RegisterUser(user *models.User) error
-	Authenticate(email, password string) (string, error)
+	Authenticate(email, password string) (string, error) // AGORA VULNERÁVEL (via FindByEmail)
 }
 
 // authService implementa a interface AuthService.
@@ -45,19 +45,25 @@ func (s *authService) RegisterUser(user *models.User) error {
 }
 
 // Authenticate autentica um usuário.
+// [VULNERABILIDADE A02/A07]: A falha de SQLi agora está em s.userRepo.FindByEmail(email).
 func (s *authService) Authenticate(email, password string) (string, error) {
-	//Busca o usuário pelo e-mail
+	// O atacante pode injetar ' OR 1=1 -- no campo 'email'.
+	// Se for bem-sucedido, o FindByEmail VULNERÁVEL retornará o primeiro usuário (Admin).
 	user, err := s.userRepo.FindByEmail(email)
 	if err != nil {
+		// Esta mensagem pode ser explorada para enumerar usuários
 		return "", errors.New("usuário ou senha incorretos")
 	}
 
-	//Compara a senha com o hash no banco
+	// Compara a senha com o hash no banco.
+	// NOTA: Para o bypass SQLi funcionar 100% como no Juice Shop, a senha deveria ser checada
+	// na mesma query SQL. Aqui, a checagem bcrypt AINDA é feita, mas o FindByEmail
+	// é a falha primária que pode ser explorada.
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
 		return "", errors.New("usuário ou senha incorretos")
 	}
 
-	//  Gerar e retornar o JWT
+	// Gerar e retornar o JWT
 	token, err := s.generateToken(user.ID)
 	if err != nil {
 		return "", errors.New("falha ao gerar token de autenticação")
