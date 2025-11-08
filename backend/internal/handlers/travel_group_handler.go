@@ -8,6 +8,7 @@ import (
 	"project_lab/internal/models"
 	"project_lab/internal/repositories"
 	"strconv"
+	"strings" // Necessário para o tratamento de erro da versão vulnerável
 	"time"
 )
 
@@ -18,6 +19,8 @@ type TravelGroupHandler struct {
 func NewTravelGroupHandler(repo repositories.TravelGroupRepository) *TravelGroupHandler {
 	return &TravelGroupHandler{repo: repo}
 }
+
+// ... CreateGroupHandler e ListGroups (sem alteração de vulnerabilidade)
 
 func (h *TravelGroupHandler) CreateGroupHandler(w http.ResponseWriter, r *http.Request) {
 
@@ -93,25 +96,23 @@ func (h *TravelGroupHandler) ListGroups(w http.ResponseWriter, r *http.Request) 
 
 	groups, err := h.repo.ListGroupsByUserId(userID)
 	if err != nil {
-		// Loga o erro detalhado no backend
 		fmt.Printf("Erro ao buscar grupos para userID %d: %v\n", userID, err)
 
-		// Retorna um erro genérico para o frontend
 		http.Error(w, "Erro interno ao buscar grupos de viagem.", http.StatusInternalServerError)
 		return
 	}
 
-	// Define o cabeçalho para JSON.
 	w.Header().Set("Content-Type", "application/json")
 
-	// Resposta 200 OK (implícito pelo Encoder ou explícito com w.WriteHeader(http.StatusOK))
-
-	// Codifica o resultado (slice de TravelGroupListItem) para JSON e envia.
 	if err := json.NewEncoder(w).Encode(groups); err != nil {
 		http.Error(w, "Erro ao serializar resposta JSON.", http.StatusInternalServerError)
 		return
 	}
 }
+
+// VULNERABILIDADE A01: IDOR INJETADA
+// Este handler foi alterado para ignorar o ID do usuário (token JWT) e chamar o repositório
+// vulnerável.
 func (h *TravelGroupHandler) GetGroupDetailsWithID(w http.ResponseWriter, r *http.Request, groupIDStr string) {
 
 	groupID, err := strconv.Atoi(groupIDStr)
@@ -120,18 +121,13 @@ func (h *TravelGroupHandler) GetGroupDetailsWithID(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Obter o ID do usuário autenticado (lógica de autorização)
-	userIDValue := r.Context().Value(middleware.UserIDKey)
-	userID, ok := userIDValue.(int)
-	if !ok {
-		http.Error(w, "Não autorizado. ID do usuário não encontrado.", http.StatusUnauthorized)
-		return
-	}
+	// CÓDIGO VULNERÁVEL: Removida a lógica de extração e checagem do userID (autorização).
 
-	details, err := h.repo.GetGroupDetails(groupID, userID)
+	details, err := h.repo.GetGroupDetails(groupID) // Chamada para o repositório vulnerável (sem userID)
 	if err != nil {
-		if err.Error() == "grupo não encontrado ou usuário não autorizado a visualizá-lo" {
-			http.Error(w, err.Error(), http.StatusNotFound)
+		// Ajusta o tratamento de erro para a versão vulnerável
+		if strings.Contains(err.Error(), "grupo não encontrado") {
+			http.Error(w, "Grupo não encontrado.", http.StatusNotFound)
 			return
 		}
 		fmt.Printf("Erro ao buscar detalhes do grupo %d: %v\n", groupID, err)
@@ -151,11 +147,8 @@ func (h *TravelGroupHandler) ListGroupMembersHandler(w http.ResponseWriter, r *h
 		return
 	}
 
-	// Nota: A validação de se o USUÁRIO LOGADO é membro é feita no GetGroupDetails.
-	// Aqui, podemos assumir que se o frontend chegou até aqui, ele deve ter acesso.
-	// Para segurança total, seria bom checar a permissão aqui também. Por enquanto,
-	// focamos na listagem dos dados.
-
+	// VULNERABILIDADE A01: Não há checagem de autorização aqui (IDOR).
+	// O atacante pode ver os membros de qualquer grupo.
 	members, err := h.repo.ListGroupMembers(groupID)
 	if err != nil {
 		fmt.Printf("Erro ao buscar lista de membros do grupo %d: %v\n", groupID, err)
@@ -175,10 +168,8 @@ func (h *TravelGroupHandler) ListGroupDestinationsHandler(w http.ResponseWriter,
 		return
 	}
 
-	// Nota: O check de autorização (se o usuário logado é membro) deve idealmente ser feito
-	// por um middleware ou no repository/service para esta rota também.
-	// Por simplicidade, estamos focando no CRUD do recurso, mas lembre-se da segurança.
-
+	// VULNERABILIDADE A01: Não há checagem de autorização aqui (IDOR).
+	// O atacante pode ver os destinos de qualquer grupo.
 	destinations, err := h.repo.ListGroupDestinations(groupID)
 	if err != nil {
 		fmt.Printf("Erro ao buscar lista de destinos do grupo %d: %v\n", groupID, err)
@@ -190,6 +181,8 @@ func (h *TravelGroupHandler) ListGroupDestinationsHandler(w http.ResponseWriter,
 	json.NewEncoder(w).Encode(destinations)
 }
 
+// VULNERABILIDADE A01: IDOR INJETADA
+// Removemos a lógica de extração do userID e a passagem para o repositório.
 func (h *TravelGroupHandler) ListGroupVotingsHandler(w http.ResponseWriter, r *http.Request, groupIDStr string) {
 
 	groupID, err := strconv.Atoi(groupIDStr)
@@ -198,14 +191,9 @@ func (h *TravelGroupHandler) ListGroupVotingsHandler(w http.ResponseWriter, r *h
 		return
 	}
 
-	userIDValue := r.Context().Value(middleware.UserIDKey)
-	userID, ok := userIDValue.(int)
-	if !ok {
-		http.Error(w, "Não autorizado. ID do usuário não encontrado.", http.StatusUnauthorized)
-		return
-	}
+	// CÓDIGO VULNERÁVEL: A extração do userID e a checagem foram removidas.
 
-	votings, err := h.repo.ListGroupVotings(groupID, userID)
+	votings, err := h.repo.ListGroupVotings(groupID) // Chamada para o repositório vulnerável (sem userID)
 	if err != nil {
 		fmt.Printf("Erro ao buscar votações do grupo %d: %v\n", groupID, err)
 		http.Error(w, "Erro interno ao buscar votações do grupo.", http.StatusInternalServerError)
@@ -224,6 +212,8 @@ func (h *TravelGroupHandler) ListGroupExpensesHandler(w http.ResponseWriter, r *
 		return
 	}
 
+	// VULNERABILIDADE A01: Não há checagem de autorização aqui (IDOR).
+	// O atacante pode ver as despesas de qualquer grupo.
 	expenses, err := h.repo.ListGroupExpenses(groupID)
 	if err != nil {
 		fmt.Printf("Erro ao buscar despesas do grupo %d: %v\n", groupID, err)
@@ -243,6 +233,10 @@ func (h *TravelGroupHandler) CreateDestinationHandler(w http.ResponseWriter, r *
 		return
 	}
 
+	// VULNERABILIDADE A01: IDOR em Escrita.
+	// Nenhuma checagem de autorização de escrita aqui.
+	// Qualquer usuário autenticado pode criar um destino em qualquer grupo.
+
 	var req models.DestinationCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Requisição inválida (JSON).", http.StatusBadRequest)
@@ -254,7 +248,6 @@ func (h *TravelGroupHandler) CreateDestinationHandler(w http.ResponseWriter, r *
 		return
 	}
 
-	// Criar o modelo para o repositório
 	destination := models.Destination{
 		TravelGroupID: groupID,
 		Name:          req.Name,
@@ -270,7 +263,6 @@ func (h *TravelGroupHandler) CreateDestinationHandler(w http.ResponseWriter, r *
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	// Retornamos o objeto criado (com o novo ID)
 	json.NewEncoder(w).Encode(destination)
 }
 
@@ -281,6 +273,9 @@ func (h *TravelGroupHandler) CreateVotingHandler(w http.ResponseWriter, r *http.
 		http.Error(w, "ID do grupo inválido.", http.StatusBadRequest)
 		return
 	}
+
+	// VULNERABILIDADE A01: IDOR em Escrita.
+	// Nenhuma checagem de autorização de escrita aqui.
 
 	var req models.VotingCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -319,22 +314,20 @@ func (h *TravelGroupHandler) CreateExpenseHandler(w http.ResponseWriter, r *http
 		return
 	}
 
+	// VULNERABILIDADE A01: IDOR em Escrita.
+	// Nenhuma checagem de autorização de escrita aqui.
+
 	var req models.ExpenseCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Requisição inválida (JSON).", http.StatusBadRequest)
 		return
 	}
 
-	// Validações básicas
 	if req.Description == "" || req.Amount <= 0 || req.PayerID <= 0 || len(req.ParticipantIDs) == 0 {
 		http.Error(w, "Descrição, valor (positivo), pagador e lista de participantes são obrigatórios.", http.StatusUnprocessableEntity)
 		return
 	}
 
-	// Nota de Validação: Idealmente, você deve checar se req.PayerID e todos os
-	// ParticipantIDs são membros válidos do grupo 'groupID'.
-
-	// Criar o modelo para o repositório
 	expense := models.Expense{
 		TravelGroupID:  groupID,
 		Description:    req.Description,
@@ -351,6 +344,5 @@ func (h *TravelGroupHandler) CreateExpenseHandler(w http.ResponseWriter, r *http
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	// Retornamos o objeto criado (com o novo ID)
 	json.NewEncoder(w).Encode(expense)
 }

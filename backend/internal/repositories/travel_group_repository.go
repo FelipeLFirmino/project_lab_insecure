@@ -9,13 +9,16 @@ import (
 	"strings"
 )
 
+// VERSÃO VULNERÁVEL PARA O TCC (A01: IDOR)
+// As assinaturas de GetGroupDetails e ListGroupVotings foram alteradas (removido userID)
+// para replicar a falha de acesso direto inseguro a objetos.
 type TravelGroupRepository interface {
 	ListGroupsByUserId(userID int) ([]models.TravelGroupListItem, error)
 	CreateTravelGroup(group *models.TravelGroup) error
-	GetGroupDetails(groupID int, userID int) (*models.TravelGroupDetails, error)
+	GetGroupDetails(groupID int) (*models.TravelGroupDetails, error) // <-- VULNERÁVEL: userID removido
 	ListGroupMembers(groupID int) ([]models.GroupMemberDTO, error)
 	ListGroupDestinations(groupID int) ([]models.DestinationDTO, error)
-	ListGroupVotings(groupID int, userID int) ([]models.VotingDTO, error)
+	ListGroupVotings(groupID int) ([]models.VotingDTO, error) // <-- VULNERÁVEL: userID removido
 	ListGroupExpenses(groupID int) ([]models.ExpenseDTO, error)
 	CreateDestination(destination *models.Destination) error
 	CreateVoting(groupID int, question string, optionsJSON string) (int, error)
@@ -32,13 +35,11 @@ func NewTravelGroupRepository(db *sql.DB) TravelGroupRepository {
 
 // this method creates a travel group and sets its creator
 func (r *postgresTravelGroupRepository) CreateTravelGroup(group *models.TravelGroup) error {
-
-	// start of the transaction
+	// START: Não alterado (Criação de Grupo)
 	tx, err := r.db.Begin()
 	if err != nil {
 		return fmt.Errorf("falha ao iniciar transação: %w", err)
 	}
-	// DEFER: rollback.
 	defer tx.Rollback()
 
 	query := `
@@ -68,81 +69,16 @@ func (r *postgresTravelGroupRepository) CreateTravelGroup(group *models.TravelGr
 		return fmt.Errorf("erro ao adicionar criador como membro: %w", err)
 	}
 
-	// end of transaction
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("falha ao commitar transação: %w", err)
 	}
 
 	return nil
+	// END: Não alterado
 }
 
 func (r *postgresTravelGroupRepository) ListGroupsByUserId(userId int) ([]models.TravelGroupListItem, error) {
-	query := `
-		SELECT 
-			tg.id,
-			tg.name,
-			tg.description,
-			tg.start_date,
-			tg.end_date,
-			tg.creator_id,
-			u.name AS creator_name,
-			(SELECT COUNT(*) FROM group_members gm WHERE gm.travel_group_id = tg.id) AS member_count
-		FROM 
-			travel_groups tg
-		JOIN 
-			users u ON tg.creator_id = u.id
-		WHERE
-			-- O usuário é o criador OU é um membro
-			tg.creator_id = $1 OR tg.id IN (SELECT travel_group_id FROM group_members WHERE user_id = $1)
-		ORDER BY tg.start_date DESC;
-	`
-
-	rows, err := r.db.Query(query, userId)
-	if err != nil {
-		return nil, fmt.Errorf("erro ao executar query: %w", err)
-	}
-	defer rows.Close()
-
-	groups := []models.TravelGroupListItem{}
-	for rows.Next() {
-		var g models.TravelGroupListItem
-		var memberCount sql.NullInt32 // Usar sql.NullInt32 para garantir compatibilidade com COUNT
-
-		err := rows.Scan(
-			&g.ID,
-			&g.Name,
-			&g.Description,
-			&g.StartDate,
-			&g.EndDate,
-			&g.CreatorId,
-			&g.CreatorName,
-			&memberCount,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("erro ao ler linha: %w", err)
-		}
-
-		// Garante que a contagem é um inteiro
-		if memberCount.Valid {
-			g.MemberCount = int(memberCount.Int32)
-		} else {
-			g.MemberCount = 0
-		}
-
-		groups = append(groups, g)
-	}
-
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("erro após iteração: %w", err)
-	}
-
-	return groups, nil
-}
-
-func (r *postgresTravelGroupRepository) GetGroupDetails(groupID int, userID int) (*models.TravelGroupDetails, error) {
-
-	// Consulta SQL para obter detalhes básicos, nome do criador e contagem de membros.
-	// Também valida se o usuário (userID) é membro/criador.
+	// START: Não alterado (Busca os grupos do usuário logado)
 	query := `
         SELECT 
             tg.id,
@@ -158,15 +94,82 @@ func (r *postgresTravelGroupRepository) GetGroupDetails(groupID int, userID int)
         JOIN 
             users u ON tg.creator_id = u.id
         WHERE
-            tg.id = $1
-            -- Verifica se o usuário é membro ou criador antes de retornar os detalhes
-            AND (tg.creator_id = $2 OR tg.id IN (SELECT travel_group_id FROM group_members WHERE user_id = $2));
+            -- O usuário é o criador OU é um membro
+            tg.creator_id = $1 OR tg.id IN (SELECT travel_group_id FROM group_members WHERE user_id = $1)
+        ORDER BY tg.start_date DESC;
+    `
+
+	rows, err := r.db.Query(query, userId)
+	if err != nil {
+		return nil, fmt.Errorf("erro ao executar query: %w", err)
+	}
+	defer rows.Close()
+
+	groups := []models.TravelGroupListItem{}
+	for rows.Next() {
+		var g models.TravelGroupListItem
+		var memberCount sql.NullInt32
+
+		err := rows.Scan(
+			&g.ID,
+			&g.Name,
+			&g.Description,
+			&g.StartDate,
+			&g.EndDate,
+			&g.CreatorId,
+			&g.CreatorName,
+			&memberCount,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("erro ao ler linha: %w", err)
+		}
+
+		if memberCount.Valid {
+			g.MemberCount = int(memberCount.Int32)
+		} else {
+			g.MemberCount = 0
+		}
+
+		groups = append(groups, g)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("erro após iteração: %w", err)
+	}
+
+	return groups, nil
+	// END: Não alterado
+}
+
+// VULNERABILIDADE A01: IDOR INJETADA
+// A função não recebe mais o userID. A query não checa a autorização.
+func (r *postgresTravelGroupRepository) GetGroupDetails(groupID int) (*models.TravelGroupDetails, error) {
+
+	// A checagem de autorização foi removida DENTRO da query.
+	query := `
+        SELECT 
+            tg.id,
+            tg.name,
+            tg.description,
+            tg.start_date,
+            tg.end_date,
+            tg.creator_id,
+            u.name AS creator_name,
+            (SELECT COUNT(*) FROM group_members gm WHERE gm.travel_group_id = tg.id) AS member_count
+        FROM 
+            travel_groups tg
+        JOIN 
+            users u ON tg.creator_id = u.id
+        WHERE
+            tg.id = $1;
+            -- O check de autorização (que usava $2 - o userID) foi removido para replicar o IDOR.
+            -- Qualquer usuário que saiba o ID do grupo pode obter seus detalhes.
     `
 
 	var details models.TravelGroupDetails
 	var memberCount sql.NullInt32
 
-	err := r.db.QueryRow(query, groupID, userID).Scan(
+	err := r.db.QueryRow(query, groupID).Scan( // userID removido daqui
 		&details.ID,
 		&details.Name,
 		&details.Description,
@@ -179,12 +182,12 @@ func (r *postgresTravelGroupRepository) GetGroupDetails(groupID int, userID int)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("grupo não encontrado ou usuário não autorizado a visualizá-lo")
+			// A mensagem de erro agora é genérica e não faz menção à autorização.
+			return nil, fmt.Errorf("grupo não encontrado")
 		}
 		return nil, fmt.Errorf("erro ao buscar detalhes do grupo: %w", err)
 	}
 
-	// Garante que a contagem é um inteiro
 	if memberCount.Valid {
 		details.MemberCount = int(memberCount.Int32)
 	} else {
@@ -195,6 +198,7 @@ func (r *postgresTravelGroupRepository) GetGroupDetails(groupID int, userID int)
 }
 
 func (r *postgresTravelGroupRepository) ListGroupMembers(groupID int) ([]models.GroupMemberDTO, error) {
+	// VULNERÁVEL: A autorização é delegada ao GetGroupDetails, que agora está vulnerável.
 	query := `
         SELECT 
             u.id AS user_id,
@@ -216,6 +220,7 @@ func (r *postgresTravelGroupRepository) ListGroupMembers(groupID int) ([]models.
     `
 
 	rows, err := r.db.Query(query, groupID)
+
 	if err != nil {
 		return nil, fmt.Errorf("erro ao buscar membros do grupo: %w", err)
 	}
@@ -244,6 +249,7 @@ func (r *postgresTravelGroupRepository) ListGroupMembers(groupID int) ([]models.
 }
 
 func (r *postgresTravelGroupRepository) ListGroupDestinations(groupID int) ([]models.DestinationDTO, error) {
+	// VULNERÁVEL: A autorização é delegada ao GetGroupDetails, que agora está vulnerável.
 	query := `
         SELECT 
             id,
@@ -285,29 +291,29 @@ func (r *postgresTravelGroupRepository) ListGroupDestinations(groupID int) ([]mo
 	return destinations, nil
 }
 
-func (r *postgresTravelGroupRepository) ListGroupVotings(groupID int, userID int) ([]models.VotingDTO, error) {
-	// Usamos left join para trazer a votação do usuário (se existir)
+// VULNERABILIDADE A01: IDOR INJETADA
+// A função não recebe mais o userID. Removemos a busca pelo voto específico do usuário.
+func (r *postgresTravelGroupRepository) ListGroupVotings(groupID int) ([]models.VotingDTO, error) { // userID removido
+	// A lógica de LEFT JOIN para o voto do usuário foi removida.
 	query := `
         SELECT 
             v.id,
             v.question,
             v.options,
             COUNT(vt.id) AS total_votes,
-            uv.selected_option AS user_vote_option,
+            NULL AS user_vote_option, -- Retorna NULL para a coluna que antes era o voto do usuário
             v.created_at
         FROM 
             votings v
         LEFT JOIN 
             votes vt ON v.id = vt.voting_id
-        LEFT JOIN 
-            votes uv ON v.id = uv.voting_id AND uv.user_id = $2 -- Voto do Usuário Logado
         WHERE 
             v.travel_group_id = $1
-        GROUP BY v.id, v.question, v.options, v.created_at, uv.selected_option
+        GROUP BY v.id, v.question, v.options, v.created_at
         ORDER BY v.created_at DESC;
     `
 
-	rows, err := r.db.Query(query, groupID, userID)
+	rows, err := r.db.Query(query, groupID) // userID removido daqui
 	if err != nil {
 		return nil, fmt.Errorf("erro ao buscar votações: %w", err)
 	}
@@ -323,25 +329,21 @@ func (r *postgresTravelGroupRepository) ListGroupVotings(groupID int, userID int
 		err := rows.Scan(
 			&v.ID,
 			&v.Question,
-			&optionsJSON, // String JSON
+			&optionsJSON,
 			&totalVotes,
-			&userVote,
+			&userVote, // Voto do usuário (sempre NULL)
 			&v.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("erro ao escanear votação: %w", err)
 		}
 
-		// 1. Deserializar as opções
 		if err := json.Unmarshal([]byte(optionsJSON), &v.Options); err != nil {
-			// Logar ou tratar erro, mas continuar se possível
 			fmt.Printf("Aviso: Falha ao deserializar opções JSON para votação %d: %v\n", v.ID, err)
 		}
 
-		// 2. Setar total de votos
 		v.TotalVotes = int(totalVotes.Int64)
 
-		// 3. Setar voto do usuário (se houver)
 		if userVote.Valid {
 			v.UserVote = &userVote.String
 		}
@@ -353,7 +355,7 @@ func (r *postgresTravelGroupRepository) ListGroupVotings(groupID int, userID int
 }
 
 func (r *postgresTravelGroupRepository) ListGroupExpenses(groupID int) ([]models.ExpenseDTO, error) {
-	// A consulta usa a agregação STRING_AGG para obter a lista de IDs de participantes
+	// VULNERÁVEL: A autorização é delegada ao GetGroupDetails, que agora está vulnerável.
 	query := `
         SELECT 
             e.id,
@@ -377,6 +379,7 @@ func (r *postgresTravelGroupRepository) ListGroupExpenses(groupID int) ([]models
     `
 
 	rows, err := r.db.Query(query, groupID)
+
 	if err != nil {
 		return nil, fmt.Errorf("erro ao buscar despesas: %w", err)
 	}
@@ -391,21 +394,19 @@ func (r *postgresTravelGroupRepository) ListGroupExpenses(groupID int) ([]models
 		err := rows.Scan(
 			&e.ID,
 			&e.Description,
-			&e.Amount, // Mapeado diretamente para float64 (no Struct)
+			&e.Amount,
 			&e.PayerID,
 			&e.PayerName,
 			&e.CreatedAt,
 			&participantsCount,
-			&participantsIDsStr, // IDs separados por vírgula
+			&participantsIDsStr,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("erro ao escanear despesa: %w", err)
 		}
 
-		// 1. Setar contagem de participantes
 		e.ParticipantsCount = int(participantsCount.Int64)
 
-		// 2. Processar a lista de IDs de participantes
 		e.ParticipantsIDs = []int{}
 		if participantsIDsStr.Valid && participantsIDsStr.String != "" {
 			parts := strings.Split(participantsIDsStr.String, ",")
@@ -416,12 +417,14 @@ func (r *postgresTravelGroupRepository) ListGroupExpenses(groupID int) ([]models
 			}
 		}
 
-		expenses = append(expenses, e)
+		expenses = append(expenses, e) // <-- CORRIGIDO: Adiciona o item 'e' ao slice
 	}
 
 	return expenses, nil
 }
+
 func (r *postgresTravelGroupRepository) CreateDestination(destination *models.Destination) error {
+	// VULNERÁVEL: Método de escrita exposto a IDOR (não checa autorização).
 	query := `
         INSERT INTO destinations 
         (travel_group_id, name, location, description, created_at) 
@@ -429,7 +432,6 @@ func (r *postgresTravelGroupRepository) CreateDestination(destination *models.De
         ($1, $2, $3, $4, NOW())
         RETURNING id;
     `
-	// O ID retornado é setado de volta no struct 'destination'
 	err := r.db.QueryRow(query,
 		destination.TravelGroupID,
 		destination.Name,
@@ -444,6 +446,7 @@ func (r *postgresTravelGroupRepository) CreateDestination(destination *models.De
 }
 
 func (r *postgresTravelGroupRepository) CreateVoting(groupID int, question string, optionsJSON string) (int, error) {
+	// VULNERÁVEL: Método de escrita exposto a IDOR (não checa autorização).
 	var newID int
 	query := `
         INSERT INTO votings 
@@ -465,6 +468,7 @@ func (r *postgresTravelGroupRepository) CreateVoting(groupID int, question strin
 }
 
 func (r *postgresTravelGroupRepository) CreateExpense(expense *models.Expense) error {
+	// VULNERÁVEL: Método de escrita exposto a IDOR (não checa autorização).
 
 	tx, err := r.db.Begin()
 	if err != nil {
