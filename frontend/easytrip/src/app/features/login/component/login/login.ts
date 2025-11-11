@@ -20,7 +20,7 @@ export class Login {
   public errorMessage = signal<string | null>(null);
 
   loginForm = new FormGroup({
-    email: new FormControl('', [Validators.required, Validators.email]),
+    email: new FormControl('', [Validators.required, ]),
     password: new FormControl('', [Validators.required, Validators.minLength(6)]),
   });
 

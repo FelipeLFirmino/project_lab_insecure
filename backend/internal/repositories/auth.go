@@ -9,7 +9,6 @@ import (
 	"github.com/lib/pq"
 )
 
-// ErrEmailAlreadyExists é um erro customizado para duplicidade de e-mail.
 var ErrEmailAlreadyExists = errors.New("e-mail já está em uso")
 
 // UserRepository é a interface que define os métodos de acesso a dados para usuários.
@@ -49,8 +48,8 @@ func (r *userRepository) CreateUser(user *models.User) error {
 // FindByEmail busca um usuário no banco de dados por e-mail.
 // [VULNERABILIDADE A02/A07]: Este método está VULNERÁVEL a SQL Injection (SQLi).
 func (r *userRepository) FindByEmail(email string) (*models.User, error) {
-	// FALHA AQUI: Usando concatenação de string INSEGURA (fmt.Sprintf)
-	// em vez da forma segura ($1, consultas preparadas).
+	// FALHA AQUI: Usando concatenação de string INSEGURA (fmt.Sprintf).
+	// O atacante pode injetar: ' OR 1=1 --
 	query := fmt.Sprintf("SELECT id, name, email, password_hash FROM users WHERE email = '%s'", email)
 
 	user := &models.User{}
