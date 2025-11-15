@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  # Serviço 1: Banco de Dados Postgres
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    # CORREÇÃO: Informa ao 'db' onde encontrar o .env
+    env_file:
+      - ./backend/.env
+    ports:
+      - "5432:5432" 
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Serviço 2: Backend (Go)
+  backend:
+    build: ./backend
+    restart: always
+    ports:
+      - "8080:8080"
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - db
+
+  # Serviço 3: Frontend (Angular)
+  frontend:
+    build: ./frontend/easytrip 
+    restart: always
+    ports:
+      - "4200:80"
+    env_file:
+      - ./backend/.env 
+    depends_on:
+      - backend
+# Volume para persistir os dados do Postgres
+volumes:
+  postgres_data:
